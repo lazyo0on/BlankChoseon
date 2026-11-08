@@ -125,14 +125,14 @@ function viewLogin(message) {
   app.style.paddingBottom = '';
   app.innerHTML = `<section class="login"><div class="sheet">
     <h1>${esc(CFG.TITLE)}</h1>
-    <p class="lead">${esc(CFG.SUBTITLE)}<br>교과서 본문 ${DATA.length}문장을 빈칸으로 연습합니다.</p>
+    <p class="lead">${esc(CFG.SUBTITLE)}<br>교과서 본문 빈칸 채우기 연습용입니다.</p>
     <form id="f" autocomplete="off">
       <label for="sid">학번 5자리</label>
       <div class="omr" id="omr">${'<span></span>'.repeat(5)}<input id="sid" inputmode="numeric" pattern="[0-9]*" maxlength="5" aria-label="학번 5자리"></div>
       <div class="msg" id="msg">${message ? esc(message) : ''}</div>
       <button class="btn btn-main" id="enter" type="submit">시작하기</button>
     </form>
-    <p class="fine">이름이나 비밀번호는 입력하지 않습니다.</p>
+    <p class="fine">학번만 5자리로 입력하면 됩니다.</p>
   </div></section>`;
   const inp = document.getElementById('sid'), cells = [...document.querySelectorAll('#omr span')], msg = document.getElementById('msg');
   const paint = () => {
