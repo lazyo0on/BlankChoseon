@@ -150,7 +150,7 @@ function viewLogin(message) {
     const btn = document.getElementById('enter'); btn.disabled = true; btn.textContent = '기록 불러오는 중…';
     try {
       const j = await remoteLoad(id);
-      if (!j.ok && j.error === 'not_registered') { btn.disabled = false; btn.textContent = '시작하기'; msg.className = 'msg'; msg.textContent = '등록되지 않은 학번입니다. 학번을 확인하고, 맞다면 선생님께 말씀드리세요.'; return; }
+      if (!j.ok && j.error === 'not_registered') { btn.disabled = false; btn.textContent = '시작하기'; msg.className = 'msg'; msg.textContent = '학번을 확인하고 다시 입력해주세요.'; return; }
       if (!j.ok) throw new Error(j.error);
       openUser(id);
       if (mergeFrom(j.progress || '')) { st.dirty = true; }
