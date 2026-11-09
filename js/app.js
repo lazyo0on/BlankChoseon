@@ -41,7 +41,7 @@ const store = {
 const KEY = 'history-blank:v1:';
 let sid = null, st = null;
 const fresh = () => ({
-  lv: {}, streak: {}, pos: {}, queue: null, queueKey: null, dirty: false,
+  lv: {}, best: {}, streak: {}, pos: {}, queue: null, queueKey: null, dirty: false,
   settings: { order: 'seq', fmt: 'drag', count: 'rand', scope: SECTIONS.map(s => s.name) }
 });
 function openUser(id) {
@@ -50,6 +50,8 @@ function openUser(id) {
   st = Object.assign(fresh(), saved);
   st.settings = Object.assign(fresh().settings, saved.settings || {});
   st.settings.scope = st.settings.scope.filter(n => SECTIONS.some(s => s.name === n));
+  st.best = st.best || {};
+  DATA.forEach(s => { if ((st.lv[s.id] || 0) > (st.best[s.id] || 0)) st.best[s.id] = st.lv[s.id]; });
   store.set(KEY + 'last', id);
 }
 function save() { if (sid) store.set(KEY + 'u:' + sid, st); }
@@ -57,15 +59,27 @@ function save() { if (sid) store.set(KEY + 'u:' + sid, st); }
 /* ---------- 구글 시트 동기화 ---------- */
 let syncState = REMOTE ? 'saved' : 'off', sinceSave = 0, pushing = false;
 const progressString = () => DATA.map(s => st.lv[s.id] || 0).join('');
-function mergeFrom(str) {
+const bestString = () => DATA.map(s => st.best[s.id] || 0).join('');
+function mergeFrom(str, bestStr) {
   let changed = false;
   DATA.forEach((s, i) => {
     const remote = Number(str[i] || 0), local = st.lv[s.id] || 0;
     if (remote > local) { st.lv[s.id] = remote; }
     if (local > remote) changed = true;
+    const rb = Math.max(Number((bestStr || '')[i] || 0), remote), lb = st.best[s.id] || 0;
+    if (rb > lb) st.best[s.id] = rb;
+    if (lb > rb) changed = true;
+    if ((st.lv[s.id] || 0) > (st.best[s.id] || 0)) st.best[s.id] = st.lv[s.id];
   });
   return changed;
 }
+
+/* ---------- 달성도와 눈사람 ----------
+   문장마다 지금까지 오른 최고 단계로 점수를 냅니다: 맞힘 1점, 숙달 2점.
+   틀려도 최고 단계는 그대로라서 달성도와 눈사람은 줄어들지 않습니다. */
+const MAX_POINTS = DATA.length * 2;
+const bestPoints = () => DATA.reduce((n, s) => n + Math.max(0, (st.best[s.id] || 0) - 1), 0);
+const snowStage = () => window.Snowman ? window.Snowman.stageOf(bestPoints(), MAX_POINTS) : 1;
 async function remoteLoad(id) {
   const res = await fetch(REMOTE + '?action=load&sid=' + encodeURIComponent(id), { method: 'GET', redirect: 'follow' });
   return res.json();
@@ -76,7 +90,7 @@ async function push(force) {
   pushing = true; setSync('saving');
   try {
     const res = await fetch(REMOTE, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'save', sid, progress: progressString() }) });
+      body: JSON.stringify({ action: 'save', sid, progress: progressString(), best: bestString() }) });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
     st.dirty = false; sinceSave = 0; save(); setSync('saved');
@@ -95,7 +109,7 @@ function syncBadge() {
 }
 window.addEventListener('pagehide', () => {
   if (REMOTE && sid && st && st.dirty && navigator.sendBeacon) {
-    try { navigator.sendBeacon(REMOTE, new Blob([JSON.stringify({ action: 'save', sid, progress: progressString() })], { type: 'text/plain' })); } catch (e) {}
+    try { navigator.sendBeacon(REMOTE, new Blob([JSON.stringify({ action: 'save', sid, progress: progressString(), best: bestString() })], { type: 'text/plain' })); } catch (e) {}
   }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') push(true); });
@@ -153,7 +167,7 @@ function viewLogin(message) {
       if (!j.ok && j.error === 'not_registered') { btn.disabled = false; btn.textContent = '시작하기'; msg.className = 'msg'; msg.textContent = '학번을 확인하고 다시 입력해주세요.'; return; }
       if (!j.ok) throw new Error(j.error);
       openUser(id);
-      if (mergeFrom(j.progress || '')) { st.dirty = true; }
+      if (mergeFrom(j.progress || '', j.best || '')) { st.dirty = true; }
       save(); setSync(st.dirty ? 'wait' : 'saved'); viewHome(); if (st.dirty) push(true);
     } catch (err) {
       openUser(id); setSync('wait'); viewHome();
@@ -161,6 +175,27 @@ function viewLogin(message) {
     }
   });
   setTimeout(() => inp.focus(), 60);
+}
+
+/* ---------- 눈사람 상자 ---------- */
+function snowBox() {
+  const S = window.Snowman;
+  if (!S) return '';
+  const pts = bestPoints(), stage = S.stageOf(pts, MAX_POINTS);
+  const b3 = DATA.filter(s => st.best[s.id] >= 3).length, b2 = DATA.filter(s => st.best[s.id] === 2).length;
+  const next = stage < 10
+    ? `${pts}점 · <b>${S.STAGES[stage].name}</b>까지 ${S.needFor(stage + 1, MAX_POINTS) - pts}점`
+    : `${pts}점 · 마지막 단계에 올랐습니다`;
+  return `<section class="mastery snowbox">
+    <div class="snowcanvas">${S.draw(stage)}</div>
+    <div class="snowinfo">
+      <p class="stagenum">달성도 ${Math.floor(pts / MAX_POINTS * 100)}% · ${stage}단계</p>
+      <div class="stagename">${esc(S.STAGES[stage - 1].name)}</div>
+      <div class="stack" role="img" aria-label="달성 점수 ${pts}점, 만점 ${MAX_POINTS}점"><i style="width:${b3 * 2 / MAX_POINTS * 100}%;background:var(--l3)"></i><i style="width:${b2 / MAX_POINTS * 100}%;background:var(--l2)"></i></div>
+      <p class="next">${next}</p>
+    </div>
+  </section>
+  <div class="legend snowlegend"><span><i class="dot" style="background:var(--l3)"></i>숙달한 문장 2점</span><span><i class="dot" style="background:var(--l2)"></i>맞힌 문장 1점</span></div>`;
 }
 
 /* ---------- 홈 ---------- */
@@ -180,11 +215,7 @@ function viewHome() {
   app.innerHTML = `
   <header class="head"><h1>${esc(CFG.TITLE)}</h1>
     <div class="me">학번 ${sid}<br>${syncBadge()}<br><button class="textbtn" id="logout">로그아웃</button></div></header>
-  <section class="mastery">
-    <p>지금까지 숙달한 문장</p>
-    <div class="num">${all[3]} <small>/ ${DATA.length}문장</small></div>
-    <div style="margin-top:10px">${stackBar(all, DATA.length)}</div>${legend()}
-  </section>
+  ${snowBox()}
   <div class="quick"><button class="btn btn-line" id="prog">진행 현황 보기</button><button class="btn btn-line" id="wrong" ${wrong ? '' : 'disabled'}>틀린 문장 ${wrong}개 다시 풀기</button></div>
   <section class="group"><h2>학습 방식</h2><div class="choices c2">
     ${choice('order', 'seq', '교과서 순서대로', '본문 차례대로 읽으며 풀기')}
@@ -401,14 +432,17 @@ function check() {
     });
   }
   q.checked = true;
-  const before = st.lv[s.id] || 0;
+  const before = st.lv[s.id] || 0, stageBefore = snowStage();
   let lv;
   if (allOk) { st.streak[s.id] = (st.streak[s.id] || 0) + 1; lv = (q.fmt === 'blank' || st.streak[s.id] >= 2) ? 3 : Math.max(before, 2); }
   else { st.streak[s.id] = 0; lv = before <= 1 ? 1 : before - 1; }
   st.lv[s.id] = lv;
+  if (lv > (st.best[s.id] || 0)) st.best[s.id] = lv;
+  const stageAfter = snowStage();
   if (session.kind === 'rand') st.queue.shift();
   st.dirty = true; sinceSave++; save(); if (REMOTE) { setSync('wait'); push(false); }
-  out.innerHTML = (allOk ? '<span class="ok">정답입니다.</span>' : '<span class="bad">틀린 빈칸 옆에 정답을 표시했습니다.</span>') + `<span class="lv">이 문장: ${LV_NAME[lv]}</span>`;
+  out.innerHTML = (allOk ? '<span class="ok">정답입니다.</span>' : '<span class="bad">틀린 빈칸 옆에 정답을 표시했습니다.</span>') + `<span class="lv">이 문장: ${LV_NAME[lv]}</span>`
+    + (stageAfter > stageBefore && window.Snowman ? `<div class="levelup"><div class="snowcanvas small">${window.Snowman.draw(stageAfter)}</div><div><b>눈사람이 자랐어요</b><span>${stageAfter}단계 ${esc(window.Snowman.STAGES[stageAfter - 1].name)}</span></div></div>` : '');
   const act = document.getElementById('act'); act.textContent = '다음 문장'; act.focus({ preventScroll: true });
 }
 function advance() {
@@ -462,7 +496,7 @@ if (last && /^\d{5}$/.test(last)) {
     setSync(st.dirty ? 'wait' : 'saved');
     remoteLoad(last).then(j => {
       if (!j.ok && j.error === 'not_registered') { store.del(KEY + 'last'); sid = null; st = null; return viewLogin('등록되지 않은 학번입니다. 다시 입력하세요.'); }
-      if (j.ok && mergeFrom(j.progress || '')) st.dirty = true;
+      if (j.ok && mergeFrom(j.progress || '', j.best || '')) st.dirty = true;
       save(); if (!session) viewHome(); push(true);
     }).catch(() => setSync('wait'));
   }
